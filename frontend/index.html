@@ -1,0 +1,537 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Supra Hospital AI Assistant</title>
+
+<style>
+* {
+    box-sizing: border-box;
+}
+
+body {
+    margin: 0;
+    font-family: Inter, Arial, sans-serif;
+    background: #f5f7fb;
+    color: #172033;
+}
+
+header {
+    height: 70px;
+    background: white;
+    border-bottom: 1px solid #e3e7ef;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 0 32px;
+}
+
+.logo {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    font-weight: 700;
+    font-size: 20px;
+}
+
+.logo-icon {
+    width: 38px;
+    height: 38px;
+    border-radius: 10px;
+    background: #155eef;
+    color: white;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-weight: 800;
+}
+
+.header-right {
+    display: flex;
+    align-items: center;
+    gap: 14px;
+}
+
+.role-select {
+    border: 1px solid #d7dce5;
+    border-radius: 8px;
+    padding: 9px 12px;
+    background: white;
+    font-size: 14px;
+}
+
+.status {
+    color: #18864b;
+    font-size: 13px;
+}
+
+.container {
+    max-width: 1250px;
+    margin: 0 auto;
+    padding: 30px;
+}
+
+.hero {
+    margin-bottom: 24px;
+}
+
+.hero h1 {
+    margin: 0 0 8px;
+    font-size: 28px;
+}
+
+.hero p {
+    margin: 0;
+    color: #667085;
+}
+
+.main-grid {
+    display: grid;
+    grid-template-columns: 1fr 320px;
+    gap: 22px;
+}
+
+.card {
+    background: white;
+    border: 1px solid #e3e7ef;
+    border-radius: 14px;
+    padding: 22px;
+    box-shadow: 0 2px 8px rgba(16,24,40,.04);
+}
+
+.user-card {
+    margin-bottom: 18px;
+}
+
+.user-label {
+    font-size: 12px;
+    color: #667085;
+    text-transform: uppercase;
+    letter-spacing: .06em;
+}
+
+.user-name {
+    font-size: 18px;
+    font-weight: 700;
+    margin-top: 4px;
+}
+
+.badges {
+    display: flex;
+    gap: 8px;
+    margin-top: 10px;
+}
+
+.badge {
+    padding: 5px 9px;
+    border-radius: 999px;
+    background: #eef4ff;
+    color: #175cd3;
+    font-size: 12px;
+}
+
+textarea {
+    width: 100%;
+    min-height: 120px;
+    resize: vertical;
+    border: 1px solid #d0d5dd;
+    border-radius: 10px;
+    padding: 14px;
+    font-family: inherit;
+    font-size: 15px;
+    outline: none;
+}
+
+textarea:focus {
+    border-color: #155eef;
+}
+
+.ask-btn {
+    margin-top: 12px;
+    width: 100%;
+    padding: 13px;
+    border: none;
+    border-radius: 9px;
+    background: #155eef;
+    color: white;
+    font-size: 15px;
+    font-weight: 600;
+    cursor: pointer;
+}
+
+.ask-btn:hover {
+    background: #004eeb;
+}
+
+.answer {
+    margin-top: 20px;
+    padding: 18px;
+    border-radius: 10px;
+    background: #f8faff;
+    border-left: 4px solid #155eef;
+    white-space: pre-line;
+    line-height: 1.6;
+}
+
+.sources {
+    margin-top: 18px;
+}
+
+.source {
+    padding: 12px;
+    border: 1px solid #e4e7ec;
+    border-radius: 9px;
+    margin-top: 8px;
+    background: #fafafa;
+}
+
+.source-title {
+    font-weight: 600;
+    font-size: 14px;
+}
+
+.source-meta {
+    color: #667085;
+    font-size: 12px;
+    margin-top: 4px;
+}
+
+.side-title {
+    font-weight: 700;
+    margin-bottom: 14px;
+}
+
+.test-btn {
+    width: 100%;
+    text-align: left;
+    background: #fff;
+    border: 1px solid #e4e7ec;
+    border-radius: 9px;
+    padding: 11px;
+    margin-bottom: 8px;
+    cursor: pointer;
+    font-size: 13px;
+}
+
+.test-btn:hover {
+    background: #f5f8ff;
+    border-color: #155eef;
+}
+
+.security {
+    margin-top: 18px;
+    padding: 14px;
+    background: #f0fdf4;
+    border: 1px solid #bbf7d0;
+    border-radius: 10px;
+    font-size: 13px;
+    line-height: 1.5;
+}
+
+.warning {
+    margin-top: 18px;
+    padding: 13px;
+    background: #fffaeb;
+    border: 1px solid #fedf89;
+    border-radius: 10px;
+    font-size: 12px;
+    color: #7a2e0b;
+}
+
+.loading {
+    color: #667085;
+    font-size: 14px;
+}
+
+@media(max-width: 800px) {
+    .main-grid {
+        grid-template-columns: 1fr;
+    }
+
+    .container {
+        padding: 18px;
+    }
+}
+</style>
+</head>
+
+<body>
+
+<header>
+    <div class="logo">
+        <div class="logo-icon">S+</div>
+        <div>Supra Hospital AI</div>
+    </div>
+
+    <div class="header-right">
+        <span class="status">● System connected</span>
+
+        <select id="userSelect" class="role-select">
+            <option value="vikram">Dr. Vikram — HOD</option>
+            <option value="priya">Nurse Priya — Staff Nurse</option>
+            <option value="meera">Dr. Meera — HOD</option>
+            <option value="ananya">Dr. Ananya — Junior Doctor</option>
+            <option value="suresh">Admin Suresh — Hospital Admin</option>
+        </select>
+    </div>
+</header>
+
+<div class="container">
+
+    <div class="hero">
+        <h1>Hospital Knowledge Assistant</h1>
+        <p>
+            Ask questions using Supra Hospital's internal protocols,
+            decisions and organizational knowledge.
+        </p>
+    </div>
+
+    <div class="main-grid">
+
+        <main>
+
+            <div class="card user-card">
+                <div class="user-label">Current user</div>
+                <div id="userName" class="user-name">Dr. Vikram</div>
+
+                <div class="badges">
+                    <span id="roleBadge" class="badge">HOD</span>
+                    <span id="deptBadge" class="badge">Orthopaedics</span>
+                </div>
+            </div>
+
+            <div class="card">
+
+                <div class="user-label">Ask Supra AI</div>
+
+                <textarea
+                    id="question"
+                    placeholder="Example: What pain medication should I give a post-TKR patient?"
+                ></textarea>
+
+                <button class="ask-btn" onclick="askQuestion()">
+                    Ask Supra AI
+                </button>
+
+                <div id="result"></div>
+
+            </div>
+
+        </main>
+
+        <aside>
+
+            <div class="card">
+
+                <div class="side-title">
+                    Assessment test queries
+                </div>
+
+                <button class="test-btn"
+                    onclick="useQuestion('What pain medication should I give a post-TKR patient?')">
+                    1. Post-TKR pain medication
+                </button>
+
+                <button class="test-btn"
+                    onclick="useQuestion('Patient Rajan has knee pain, what should I prescribe?')">
+                    2. Patient Rajan
+                </button>
+
+                <button class="test-btn"
+                    onclick="useQuestion('When should I start DVT prophylaxis after surgery?')">
+                    3. DVT prophylaxis
+                </button>
+
+                <button class="test-btn"
+                    onclick="useQuestion('What is our sepsis protocol?')">
+                    4. Sepsis protocol
+                </button>
+
+                <button class="test-btn"
+                    onclick="useQuestion('Tell me about Mrs. Padma’s medication management')">
+                    5. Mrs. Padma
+                </button>
+
+                <div class="security">
+                    <strong>🔐 Access-controlled knowledge</strong>
+                    <br><br>
+                    Responses are grounded in records the current
+                    hospital user is authorized to access.
+                </div>
+
+                <div class="warning">
+                    <strong>Clinical safety:</strong><br>
+                    This prototype is for demonstration purposes.
+                    It does not replace clinical judgment or hospital
+                    policy verification.
+                </div>
+
+            </div>
+
+        </aside>
+
+    </div>
+</div>
+
+
+<script>
+
+const API = "http://127.0.0.1:8000";
+
+const users = {
+    vikram: {
+        name: "Dr. Vikram",
+        role: "HOD",
+        department: "Orthopaedics"
+    },
+    priya: {
+        name: "Nurse Priya",
+        role: "Staff Nurse",
+        department: "Orthopaedics"
+    },
+    meera: {
+        name: "Dr. Meera",
+        role: "HOD",
+        department: "General Medicine"
+    },
+    ananya: {
+        name: "Dr. Ananya",
+        role: "Junior Doctor",
+        department: "General Medicine"
+    },
+    suresh: {
+        name: "Admin Suresh",
+        role: "Hospital Admin",
+        department: "Administration"
+    }
+};
+
+
+document
+.getElementById("userSelect")
+.addEventListener("change", function() {
+
+    const user = users[this.value];
+
+    document.getElementById("userName")
+        .textContent = user.name;
+
+    document.getElementById("roleBadge")
+        .textContent = user.role;
+
+    document.getElementById("deptBadge")
+        .textContent = user.department;
+
+    document.getElementById("result").innerHTML = "";
+});
+
+
+function useQuestion(question) {
+    document.getElementById("question").value = question;
+    askQuestion();
+}
+
+
+async function askQuestion() {
+
+    const question =
+        document.getElementById("question").value.trim();
+
+    const userId =
+        document.getElementById("userSelect").value;
+
+    const result =
+        document.getElementById("result");
+
+    if (!question) {
+        result.innerHTML =
+            '<div class="answer">Please enter a question.</div>';
+        return;
+    }
+
+    result.innerHTML =
+        '<div class="answer loading">Searching authorized Supra Hospital knowledge...</div>';
+
+    try {
+
+        const response = await fetch(
+            `${API}/ask`,
+            {
+                method: "POST",
+                headers: {
+                    "Content-Type": "application/json"
+                },
+                body: JSON.stringify({
+                    user_id: userId,
+                    question: question
+                })
+            }
+        );
+
+        const data = await response.json();
+
+        if (data.error) {
+            result.innerHTML =
+                `<div class="answer">${escapeHtml(data.error)}</div>`;
+            return;
+        }
+
+        let html = `
+            <div class="answer">
+                ${escapeHtml(data.answer)}
+            </div>
+        `;
+
+        if (data.sources && data.sources.length > 0) {
+
+            html += `
+                <div class="sources">
+                    <div class="user-label">Retrieved sources</div>
+            `;
+
+            data.sources.forEach(source => {
+
+                html += `
+                    <div class="source">
+                        <div class="source-title">
+                            📄 ${escapeHtml(source.title)}
+                        </div>
+
+                        <div class="source-meta">
+                            Department: ${escapeHtml(source.department)}
+                            ${source.confidential ? " · Confidential" : ""}
+                        </div>
+                    </div>
+                `;
+            });
+
+            html += `</div>`;
+        }
+
+        result.innerHTML = html;
+
+    } catch (error) {
+
+        result.innerHTML = `
+            <div class="answer">
+                Unable to connect to the Supra backend.
+                Make sure FastAPI is running on port 8000.
+            </div>
+        `;
+    }
+}
+
+
+function escapeHtml(text) {
+
+    const div = document.createElement("div");
+    div.textContent = text;
+
+    return div.innerHTML;
+}
+
+</script>
+
+</body>
+</html>
