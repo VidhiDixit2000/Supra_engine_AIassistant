@@ -1,316 +1,266 @@
 # Supra Hospital AI Assistant — Design Document
 
 **Supra Multi-Specialty Hospital, Hyderabad**
-Architecture, safety model, findings and roadmap.
 
-> Deliverables: working prototype (FastAPI + Supabase + Gemini + browser client) and this document.
-> Scope: 15 supplied organisational records, 5 staff roles, 7 departments.
-> Stack: Python 3.13 / FastAPI, Supabase Postgres, Gemini 3.7 Flash, static HTML + JS client.
+> **Deliverables:** working prototype (FastAPI + Supabase + Gemini + browser client) and this document.
+> **Scope:** 15 supplied organisational records, 5 staff roles, 7 departments.
+> **Stack:** Python 3.13 / FastAPI, Supabase Postgres, Gemini 3.7 Flash, static HTML + JS client.
 > *Not a medical device. Assessment prototype only.*
 
 ---
 
-## 1. Executive summary
+## 1. What this system does
 
-A doctor at Supra does not need an assistant that knows medicine. Every junior doctor already has one on their phone. What Supra needs is an assistant that knows Supra: that Dr. Vikram removed NSAIDs from the post-TKR analgesia ladder in January 2025, that patient Rajan has refused NSAIDs eight times on a documented cardiac indication, that the sepsis lactate window was tightened from three hours to one, and that a staff nurse should not be able to read the departmental budget.
+A doctor at Supra can already ask ChatGPT about medicine. What they cannot ask ChatGPT is anything about *Supra* — that Dr. Vikram removed NSAIDs from the post-knee-replacement pain ladder in January 2025, that patient Rajan has refused NSAIDs eight times because of a heart condition, or that Supra tightened its sepsis lactate window from three hours to one.
 
-The system is a three-tier application. A browser client calls a FastAPI backend, which enforces authorization against Supabase, retrieves candidate records, runs deterministic safety checks, and only then asks Gemini to phrase an answer from the records it was given.
+This system answers questions from the hospital's own written records instead of from general medical knowledge. It checks who is asking, finds the relevant hospital records, runs safety checks, and only then asks an AI model to turn those records into a readable answer.
 
-The design position is that the language model is the least trustworthy component in the system, so it is given the least authority. It phrases answers. It does not decide what is safe, what a user may see, whether a question is answerable, or what Supra's protocol is. Those four decisions are made in Python, from database records, and are reproducible without the model.
+### The main idea
 
-### The five gates
+The AI model is the part of the system we can least predict, so it is given the least responsibility. Its only job is to phrase an answer from records it has been handed.
 
-Before Gemini is called at all, a request passes through four gates, and its output passes through a fifth.
+Four decisions are made in Python code, from the database, **before** the model is called:
 
-- Authorization — records outside the user's clearance are removed before retrieval, so nothing unauthorised ever enters the prompt.
+1. **What is this person allowed to see?**
+2. **Which records are relevant to the question?**
+3. **Can this question be answered at all?**
+4. **Are there patient safety rules that apply?**
 
-- Permission disclosure — if a record the user is NOT cleared for matches the question better than anything they are, the model is never called and the user is told plainly that a record exists and they lack clearance.
+Because these run in code, they behave the same way every time. The model cannot argue with them, and rephrasing the question does not change them.
 
-- Ambiguity — a topic rather than a question, matching several records, returns the list instead of picking one.
+### The five checks
 
-- Coverage — below a relevance threshold the model is not called and the assistant states that Supra has no documented record, rather than answering from general medical knowledge.
+| Check | What it does |
+|---|---|
+| **Authorization** | Removes records the user is not cleared for, before anything else happens |
+| **Permission** | If a record the user *can't* see matches their question, says so plainly instead of answering something else |
+| **Ambiguity** | If the question is a topic rather than a question, lists the applicable records instead of picking one |
+| **Coverage** | If no record is relevant enough, says Supra has no documented rule instead of guessing |
+| **Safety interlock** | Adds patient drug alerts before the model runs, and scans the model's answer afterwards |
 
-- Safety interlock — patient standing orders are injected from the record before generation, and the generated text is scanned afterwards for prohibited drugs.
+---
 
-## 2. Why a hospital cannot just use a public chatbot
+## 2. Why a hospital cannot just use ChatGPT
 
-This is what the brief is really asking, so it deserves a precise answer rather than the usual line about hallucination. There are five distinct failure modes and only one is about the model being wrong.
+Five reasons, and only the first is about the model being wrong.
 
-### 2.1 It is confidently right in general and wrong here
+**It is right in general and wrong here.** Ask a general AI about pain relief after a knee replacement and it suggests paracetamol plus an anti-inflammatory (an NSAID, like ibuprofen). That is the textbook answer and it is correct almost everywhere. At Supra it is a bleeding risk that Dr. Vikram removed from the protocol. The model isn't making anything up — it is answering a question the doctor didn't ask, which is harder to catch than an obvious mistake.
 
-Asked about post-TKR analgesia, a general model returns textbook multimodal analgesia including an NSAID, because that is the correct general answer. At Supra it is a bleeding risk that a named consultant removed from the ladder. The model is not hallucinating; it is answering a question the doctor did not ask. That is more dangerous than a hallucination because it survives scrutiny.
+**It does not know individual patients.** To ChatGPT, "Rajan" is just a name, not a man with a 2022 cardiac stent, blood-thinning medication and eight documented NSAID refusals.
 
-### 2.2 It has no patient-level standing orders
+**It cannot control who sees what.** A public chatbot has no idea who is typing. Whatever goes into it can be read back, so the budget and the board's expansion plan cannot go near it.
 
-Rajan's alert is not a guideline, it is an instruction with a history: a 2022 stent, dual antiplatelet therapy, eight documented refusals, and an explicit note that the family will ask again. To a public chatbot, Rajan is a name with no chart, and the answer to knee pain is ibuprofen or diclofenac.
+**It does not know which version is current.** Supra's sepsis protocol is version 3. A general model gives the international guideline, which says something different.
 
-### 2.3 It cannot enforce who may know what
+**It leaves no record.** Under NABH accreditation and the DPDP Act 2023, a hospital has to show who accessed what. A ChatGPT session is invisible to the hospital, and pasting a patient's name into it is a disclosure nobody can account for.
 
-The FY2026 ortho budget and the board expansion plan are confidential. A chatbot has no concept of clearance: whatever is pasted into its context is readable by whoever pasted it. Access control must sit outside the model, because anything inside the prompt is negotiable.
+In one line: a public chatbot gives you medicine. Supra needs *its* medicine — its own approved version, filtered by who is asking, with the patient's alerts attached, and a log that it happened.
 
-### 2.4 It has no version, owner or date
+---
 
-Supra's sepsis bundle v3 tightened lactate to one hour. A general model returns the Surviving Sepsis Campaign position, which is defensible and is not Supra's. Clinical governance requires knowing which version is current, who approved it, and when it changed.
+## 3. How the system is built
 
-### 2.5 It leaves no trace
+### The three tiers
 
-Under NABH accreditation and India's DPDP Act 2023, a system touching patient data needs auditability: who asked, what was released, what was withheld. A public chatbot session is unlogged from the hospital's side, and pasting patient identifiers into it is a disclosure the hospital cannot account for.
+| Tier | What it is | Where it runs |
+|---|---|---|
+| **Client** | Plain HTML and JavaScript — role picker, question box, answer display | Browser, port 5500 |
+| **API** | FastAPI (Python) — does all the decision-making | Port 8000 |
+| **Database** | Supabase Postgres — three tables | Cloud |
+| **Model** | Gemini 3.7 Flash — writes the answer text | Called from the API |
 
-*The one-line version: a public chatbot gives you medicine. Supra needs its medicine — the version its own committee approved, filtered by who is asking, with the patient's standing orders attached, and a record that the exchange happened.*
+The Supabase and Gemini keys live only on the server. The browser never sees them, which is why the model is called from Python rather than directly from JavaScript.
 
-## 3. Architecture
+### What happens when someone asks a question
 
-| **Tier** | **Component**                         | **Responsibility**                                                         |
-|----------|---------------------------------------|----------------------------------------------------------------------------|
-| Client   | Static HTML + JS, served on port 5500 | Role selection, question entry, rendering the answer and its cited sources |
-| API      | FastAPI on port 8000                  | Authorization, retrieval, safety interlocks, gate decisions, audit         |
-| Data     | Supabase Postgres                     | hospital_users, hospital_knowledge, query_audit                            |
-| Model    | Gemini 3.7 Flash, server-side         | Phrasing an answer from records it is handed. No tools, no autonomy        |
+1. The browser sends the user's ID and their question to `/ask`.
+2. The API looks up that user — their department, whether they can see confidential records, whether they can prescribe.
+3. The knowledge base is split in two: records this user **can** see, and records they **cannot**. The second group is kept as titles only — never the actual content.
+4. The allowed records are scored against the question to find the relevant ones.
+5. The *blocked* records are also scored, using only their titles and keywords. If a blocked record matches better than anything allowed, the system stops here and says so. The model is never called.
+6. If the question is too vague and several records apply, it stops and lists them.
+7. If nothing scores highly enough, it stops and says Supra has no record covering this.
+8. Otherwise: any patient drug alert is pulled from the record and added as a mandatory instruction, and Gemini is called with the records plus a prompt telling it to cite sources and use nothing else.
+9. The answer Gemini produces is scanned for drugs banned for that patient. If it recommends one, the answer is replaced.
+10. The exchange is written to an audit table in the background.
 
-### Request flow
+### If the model fails
 
-1.  Client POSTs user_id and question to /ask.
+If Gemini is unreachable, the system shows the hospital records directly instead of an error. Staff who have started relying on the assistant are better off with the raw protocol than with nothing.
 
-2.  The user row is loaded from Supabase; clearance, department and prescriber status are derived from it.
+---
 
-3.  The knowledge base is partitioned into released and withheld records for that user. Withheld records are carried forward as metadata only — title, department, reason — never content.
+## 4. How the records are stored
 
-4.  Released records are scored lexically. A record must anchor on title, keywords or patient name to qualify; body-word matches add weight but cannot admit a record alone.
+The 15 records were supplied as just a title and some text. Storing them that way would be a mistake, because they are very different kinds of thing — one is a supplier preference, one is an absolute patient contraindication, one is a confidential budget. The extra columns are what make the system work.
 
-5.  Withheld records are scored on title and keywords only. If the best withheld match beats the best released match, the request stops here with a permission statement.
+| Column | What it is for | What breaks without it |
+|---|---|---|
+| `department` | Which department owns it (`global` = everyone) | A record is hidden from someone who needs it |
+| `confidential` | Restricted to HODs and Admin | The budget reaches a staff nurse |
+| `safety_critical` | Must be visible across all departments | A covering doctor misses a drug contraindication |
+| `patient` | Links a record to a named patient | The patient's alert is missed when they're named |
+| `banned_drugs` | Explicit list of forbidden drugs | The safety check has to guess from the text |
+| `keywords` | Words that should match this record | The right record never surfaces |
+| `owner` | Who decided this and when | The doctor cannot verify or challenge it |
 
-6.  If the query is short, names no patient, and several records qualify, it stops with an ambiguity statement listing them.
+### The kinds of record that emerged
 
-7.  If the top released score is below the coverage threshold, it stops with a no-record statement.
+- **Standing protocols** — the pain ladder, sepsis v3, DVT prophylaxis. These have an owner and a version.
+- **Patient standing orders** — Rajan and Padma. Absolute, tied to a name, and carrying a history of past refusals. They needed their own handling.
+- **Rules that came from incidents** — the 48-hour discharge rule and the verbal orders policy. Both exist because something went wrong. The incident text stays in the record, because *why* a rule exists is what makes people follow it.
+- **Operational** — implant supplier, formulary brands, handover format, emergency codes.
+- **Confidential business records** — budget and expansion plan. Same database, different rules.
 
-8.  Otherwise: patient standing orders are extracted from the matched records and injected as mandatory directives, and Gemini is called with the records, the directives and a system prompt requiring citation.
+---
 
-9.  The generated text is scanned for drugs prohibited for the named patient. A genuine recommendation replaces the answer with a block notice.
+## 5. Who can see what
 
-10. The exchange is written to query_audit as a background task, off the response path.
+Access is checked **before** records are retrieved, so anything the user isn't allowed to see never reaches the AI model at all.
 
-### Why the model is called last and least
+```python
+if is_admin(user):
+    return True
 
-Every decision that carries consequence — clearance, relevance, safety, answerability — is made before the model runs and can be reproduced without it. Gemini's only job is to turn three or four records into four to seven sentences with citations. If Gemini is unreachable, the system degrades to showing the authorized record text rather than to silence, because staff who have restructured their workflow around an assistant are worse off with nothing than with the raw protocol.
+if record.confidential:
+    return user.can_see_confidential and record.department == user.department
 
-## 4. Data model
+return record.department in ('global', user.department) or record.safety_critical
+```
 
-The 15 records were supplied as title and content. Treating them as flat text is the first available mistake, because their governance differs enormously: one is a vendor preference, one is an absolute patient contraindication, one is board-confidential. Metadata is the load-bearing part.
+Reading that in order:
 
-| **Column**      | **Purpose**                                           | **Consequence if wrong**                             |
-|-----------------|-------------------------------------------------------|------------------------------------------------------|
-| department      | Owning department; 'global' applies hospital-wide     | Wrong value hides a record from someone who needs it |
-| confidential    | Restricted to HOD and Administration                  | Budget or board strategy reaches a nurse             |
-| safety_critical | Marks records that must cross department walls        | A covering physician misses a contraindication       |
-| patient         | Pins a record to a named patient for entity retrieval | Standing order missed when the patient is named      |
-| banned_drugs    | Explicit prohibition list for the interlock           | Interlock falls back to parsing prose                |
-| keywords        | Retrieval vocabulary, including brand names           | Query misses the record it needed                    |
-| owner           | Who decided this and when                             | Doctor cannot verify or challenge the instruction    |
+- Hospital Administration sees everything. Without this, Admin Suresh could not read a record that says in its own text "HOD and Admin only".
+- Confidential records need both clearance *and* the right department. This is checked first, so the safety flag can never be used to leak a budget.
+- Everything else is visible if it is global, in your department, or marked safety-critical.
 
-### Record classes that emerged
+### Saying "no" out loud
 
-- Standing protocols with an owner and version — post-TKR ladder, sepsis v3, DVT prophylaxis, diabetic fasting.
+When a record is withheld, the system names it and says why. Someone who is told a record exists can go and ask their HOD. Someone who silently gets a thinner answer cannot tell the difference between "the hospital has no rule about this" and "there is a rule and you're not cleared for it".
 
-- Patient-level standing orders — Rajan, Padma. Absolute, attached to a name, carrying a refusal history. These behave differently from protocols and needed their own retrieval and safety path.
-
-- Incident-derived rules — the 48-hour TKR discharge rule, the verbal orders policy. These encode why, and the why is what produces compliance, so the incident text stays in the record.
-
-- Operational and commercial — implant vendor, formulary brands, handover format, emergency codes.
-
-- Confidential business records — ortho budget, expansion plan. Not clinical, same store, different governance.
-
-## 5. Authorization
-
-Authorization runs before retrieval, so nothing a user may not see ever enters the prompt. Prompt-level instructions of the form "do not reveal the budget to nurses" are a request, not a control; they survive until someone phrases a question cleverly.
-
-> if is_admin(user): return True
->
-> if record.confidential:
->
-> return user.can_see_confidential and record.department == user.department
->
-> return record.department in ('global', user.department) or record.safety_critical
-
-Confidentiality is evaluated before the safety flag, so a safety-critical marking can never be used to release a budget. Administration sits above departmental walls, because without that Admin Suresh cannot read the record that says in its own text "HOD and Admin only".
-
-### The correction that mattered
-
-The first implementation scoped every record strictly by department. That produced a specific, plausible and dangerous outcome: Dr. Meera and Dr. Ananya in General Medicine could not see the Rajan NSAID alert, because it was tagged Orthopaedics. A medicine doctor covering a ward at night, asked about Rajan's knee pain, would have received a context-free answer from a system branded as the hospital's own. There was no error and no warning — the worst possible failure shape.
-
-Confidentiality scoping and safety scoping are opposite problems and cannot share a filter. The safety_critical flag exists to separate them, and it releases records more widely, never less.
-
-### Disclosure rather than silence
-
-Silent filtering converts an access control into a clinical hazard. A user who is told a record exists and they lack clearance can escalate; a user silently handed a thinner answer cannot distinguish "Supra has no rule" from "Supra has a rule you are not cleared for". The permission gate therefore names the record title and the reason, and explicitly states that it will not answer around the restriction with a different record.
+---
 
 ## 6. The safety interlock
 
-The design assumption is that the model will eventually produce an unsafe sentence — through unusual phrasing, a long conversation, a model version change, or straightforward social pressure in the query. The system is built so that this does not reach the doctor.
+The assumption behind this part is that the AI model will eventually produce an unsafe sentence — through odd phrasing, a model update, or someone applying pressure in the question. The system is built so that when that happens, it doesn't reach the doctor.
 
-### 6.1 Before the model
+**Before the model runs.** If the question names a patient with a drug alert, that alert is pulled from the database and added as a mandatory instruction. This is record text, not model output, so it is identical every time — and it still appears even if the model call fails completely.
 
-A patient name in the query pins that patient's record and injects its content as a mandatory directive above the generated answer. This is record text, not model output, so it cannot vary between runs and it survives a failed model call.
+**After the model runs.** The generated answer is split into sentences and checked for drugs banned for that patient. If it actually recommends one, the answer is thrown away and replaced.
 
-### 6.2 After the model
+**Handling pressure.** The realistic failure is not a clean clinical question. It is "the family is insisting, just approve it this once" — and Rajan's record specifically anticipates this. Because the block fires from the database on the patient's name, before the model runs, the pressure has nothing to act on. A rule written into the prompt would be *negotiating* with that request. This one never treats it as a request.
 
-The generated answer is split into sentences and scanned for the prohibited drug list attached to the named patient. A genuine recommendation suppresses the answer and replaces it with the record-sourced instruction.
+**What it does not try to do.** It does not attempt general drug safety. It enforces the specific rules Supra has written down. A system that tried to catch every unsafe prescription would produce false alarms, and a tool that blocks correct instructions gets switched off within a week. The rules live in the database, so the pharmacy team can add to them without touching code.
 
-### 6.3 Two details that decide whether it works
+---
 
-Negation awareness. A correct answer contains the word ibuprofen, inside the sentence telling you not to use it. The first implementation blocked the correct answer. Sentences containing a negation cue are excluded from the scan; without this the interlock has to be switched off, which means it does not exist.
+## 7. Finding the right records
 
-Brand names. A doctor or a family member says Combiflam, Brufen, Voveran, Ecosprin — not ibuprofen and diclofenac. A blocklist built from the record text alone misses every one of them. An alias table expands generics to Indian brands, and a class-level prohibition on NSAIDs expands to the full vocabulary.
+### Why there is no vector database
 
-### 6.4 Pressure resistance
+With only 15 records, everything the user is allowed to see fits comfortably into the model's context window. A vector search index would add setup, delay and another thing to go wrong, without finding anything the simple approach misses.
 
-The realistic failure is not a clean clinical question but a request under pressure: the family insisting, just this once. The record itself anticipates this. Because the block is deterministic and fires on the patient name before generation, the pressure has no surface to act on. A prompt-level guardrail would be arguing with the request; this one never sees it as a request.
+The system scores records by counting matches: a keyword match is worth 3, a word in the title 2, a word in the body 1, the patient's name 40, and safety-critical records get a bonus of 4.
 
-### 6.5 What it deliberately does not do
+### Records must "anchor"
 
-It does not attempt general clinical safety. It enforces the specific rules Supra has written down. A blocklist attempting to catch every unsafe prescription would produce false blocks, and a system that blocks correct instructions is switched off within a week. Narrow and reliable beats broad and noisy. The escape valve is that the rules are data, so Pharmacy and Therapeutics extend them without touching code.
+A record only counts as a candidate if the question matched its **title, keywords or patient name**. Matching words in the body adds to the score but cannot get a record in on its own.
 
-## 7. Retrieval and the answerability gates
+### Patients always win
 
-At 15 records the released corpus fits in a context window with room to spare, so a vector index would add infrastructure, latency and a failure mode without improving recall. Retrieval is transparent lexical scoring: keyword +3, title word +2, body word +1, patient name +40, safety-critical +4.
+A patient's name gives their record an overwhelming score. "Rajan has knee pain" contains more knee-related words than Rajan-related words, so normal relevance ranking would surface the pain protocol and drop the contraindication — on a question about the patient who has the contraindication.
 
-### Anchoring
+### Knowing when to stop
 
-A record only qualifies if the question matched its title, keywords or patient. Body-word matches add weight but cannot admit a record on their own. Without this rule the query "ortho budget" pulled in every record whose text happened to contain the word ortho, and the model faithfully summarised post-TKR analgesia at someone who asked about money.
+If the best score is under 8, the model is not called and the assistant says Supra has no record covering the question. Retrieval that fails quietly is worse than retrieval that fails loudly, because the model will fill the gap fluently and in the hospital's voice.
 
-### Entity pinning
+### What would replace this at scale
 
-A patient name gives that record a dominant score. Patient standing orders must never be out-ranked by a protocol that shares more keywords: "Rajan has knee pain" contains more knee words than Rajan words, and pure relevance ranking surfaces the analgesia ladder while dropping the contraindication.
+At a few thousand records this becomes a hybrid: keyword search for exact drug and protocol names, embeddings for differently-worded questions, and a reranking step over both. The access check still runs first. Patient pinning stays a hard rule no matter what the ranker does, because it is really a safety mechanism rather than a search feature.
 
-### Coverage threshold
+---
 
-Below a top score of 8, the model is not called. The assistant states that Supra has no documented record and routes to the HOD. Retrieval that fails silently is worse than retrieval that fails loudly, because the model will fill the gap fluently and in the hospital's voice.
+## 8. Test cases
 
-### Ambiguity
+### 8.1 The five assessment queries
 
-A short query naming no patient, with several records qualifying, returns the list rather than an answer. "Ortho surgery" is a subject area, not a question: DVT prophylaxis, post-TKR analgesia and the discharge rule all apply. Answering with whichever record anchored on a shared keyword presents a keyword collision as a clinical judgement and silently omits the rest — including the discharge rule that exists because a patient was readmitted with a DVT.
+| Query | Role | Response |
+|---|---|---|
+| Post-TKR pain medication | Dr. Vikram | Paracetamol 650mg QDS, escalate to Tramadol 50mg above VAS 6, no NSAIDs at any step — each claim cited |
+| Patient Rajan, knee pain | Dr. Vikram | Alert first: no ibuprofen, aspirin or diclofenac; stent and blood-thinner reason; 8 past refusals; refuse family requests. Then the pain ladder |
+| DVT prophylaxis timing | Dr. Vikram | Enoxaparin 40mg at 12 hours post-op, all ortho surgical patients, 14 days TKR / 28 days THR |
+| Sepsis protocol | Dr. Meera | Bundle v3 2026, lactate within 1 hour, tightened from v2's 3 hours |
+| Mrs. Padma | Dr. Meera | Ekadashi fasting twice monthly, 3 hypoglycemia episodes in 2025, adjust insulin timing not dose, skip Glimepiride |
 
-### What replaces this at scale
+The Rajan answer also changes by role: for Nurse Priya it opens with a line stating that any medication order must come from a prescriber in writing. The protocol is released; the authority to act on it is not.
 
-At a few thousand records the ranking becomes hybrid: BM25 for exact protocol and drug names, embeddings for paraphrase, a reranker over the union, and a metadata pre-filter so authorization still runs before scoring rather than after. Entity pinning stays a hard rule regardless of ranker, because it is a safety mechanism wearing a retrieval costume.
+### 8.2 Same question, different person
 
-## 8. Demonstrated behaviour
+Nurse Priya asks two two-word questions from the same department and gets opposite outcomes.
 
-| **Query**                | **Role**    | **System response**                                                                                                                                                                |
-|--------------------------|-------------|------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
-| Post-TKR pain medication | Dr. Vikram  | Paracetamol 650mg QDS, escalate to Tramadol 50mg above VAS 6, NSAIDs avoided at all steps, each claim cited                                                                        |
-| Patient Rajan, knee pain | Dr. Vikram  | Standing order first: no ibuprofen, aspirin or diclofenac; stent and dual antiplatelet reason; 8 documented refusals; refuse family requests. Then the Paracetamol/Tramadol ladder |
-| Patient Rajan, knee pain | Nurse Priya | Same, prefixed with the prescriber note — the order must come from a prescriber in writing                                                                                         |
-| DVT prophylaxis timing   | Dr. Vikram  | Enoxaparin 40mg SC at 12 hours post-op, all ortho surgical patients, 14 days TKR / 28 days THR                                                                                     |
-| Sepsis protocol          | Dr. Meera   | Bundle v3 2026, lactate within 1 hour, tightened from v2's 3 hours, cultures before antibiotics, vasopressors below MAP 65                                                         |
-| Mrs. Padma               | Dr. Meera   | Ekadashi fasting twice monthly, 3 hypoglycemia episodes in 2025, adjust insulin timing not dose, skip Glimepiride                                                                  |
-| Ortho budget             | Nurse Priya | Permission statement naming the record and the reason. Model not called                                                                                                            |
-| Ortho budget             | Dr. Vikram  | Budget figures released                                                                                                                                                            |
-| Ortho budget             | Dr. Ananya  | Permission statement — a doctor, but wrong department and no clearance                                                                                                             |
-| Ortho surgery            | Dr. Meera   | Ambiguity statement listing the applicable records                                                                                                                                 |
-| Stroke thrombolysis      | Dr. Vikram  | No documented record; escalate to HOD. Model not called                                                                                                                            |
+Dr. Ananya gets the same refusal on the budget. She is a doctor with prescribing rights, but the record is confidential and belongs to another department — seniority alone does not unlock it.
 
-The role comparison is the clearest demonstration. Nurse Priya asks two two-word questions from the same department: "ortho surgery" returns the full prophylaxis protocol with a prescriber note, and "ortho budget" returns a named refusal. Same user, same system, opposite outcomes, decided in code.
+Dr. Vikram, HOD of Orthopaedics, gets the figures.
 
-## 9. Problems discovered while building
+### 8.3 Questions the system refuses
 
-In the order they were hit.
+| Query | Response |
+|---|---|
+| "What is our stroke thrombolysis protocol?" | No record exists; escalate to HOD. Model not called |
+| "ortho surgery" (broad topic) | Lists the applicable records instead of picking one |
 
-### 9.1 Department scoping quietly hid a contraindication
+---
 
-Covered in section 5. Correct as an access control, wrong as a clinical system, and it failed without any signal that it had failed.
+## 9. Problems found while building
 
-### 9.2 Relevance ranking demotes the most important record
+Each of these was found by running a test case, not by reading the code.
 
-Ranking by relevance is the wrong objective when one record is an absolute prohibition. The contraindication scored lower than the analgesia protocol on a query about the patient with the contraindication.
+### 9.1 "Patient Rajan has knee pain" — asked by Dr. Meera
 
-### 9.3 A naive blocklist blocks the correct answer
+**What happened:** nothing. No hospital context at all, and a general medical answer.
 
-The first output scan flagged the safe answer, because the safe answer names the drug it is forbidding. Negation handling is not a refinement; it is the difference between a working interlock and one that gets disabled.
+Rajan's NSAID alert is tagged to Orthopaedics, and the first version scoped every record strictly by department. Dr. Meera is General Medicine, so the alert was invisible to her. A medicine doctor covering the ward at night would have got a generic answer from a system with the hospital's name on it, with no warning that anything was missing.
 
-### 9.4 Generic drug names are insufficient in India
+Confidentiality restricts access; safety needs to widen it. They cannot share one rule. That is why there is now a separate `safety_critical` flag that only ever makes a record *more* visible.
 
-Combiflam, Brufen, Voveran and Ecosprin are what people actually say. Maintaining that mapping against the formulary is a pharmacy responsibility, not an engineering one, which is an argument for holding it in the database.
+### 9.2 "Patient Rajan has knee pain" — the pain protocol outranked the alert
 
-### 9.5 Body-word matching produced confident wrong answers
+The query contains more knee-related words than Rajan-related words, so ordinary relevance scoring put the post-TKR pain ladder first and pushed the contraindication down the list. Ranking by relevance is the wrong goal when one of the records is an absolute prohibition. Hence the +40 score for a matched patient name.
 
-"Ortho budget" asked by a nurse returned post-TKR analgesia. Two independent faults compounded: common words admitted irrelevant records, and there was no gate to say "a record matches but you are not cleared for it", so the system answered an adjacent question instead. This produced the single worst behaviour observed during the build, because it was fluent, cited, and about the wrong subject.
+### 9.3 The same query — the safety check blocked the correct answer
 
-### 9.6 Thinking tokens consumed the answer budget
+The output scan looked for "ibuprofen" and found it, in the sentence saying *not* to use ibuprofen. The right answer was suppressed. The scan now skips sentences containing negation words. Without that, the check would have to be turned off entirely.
 
-Gemini 3.x counts reasoning against max_output_tokens. A 400-token budget was consumed by reasoning and the answer truncated eight words in, mid-drug-name. Configuration guidance for 3.x also drops temperature, top_p and top_k, which are silently rejected.
+### 9.4 "Can I give Combiflam to Rajan?"
 
-### 9.7 The model borrows tone from the prompt
+Nothing fired. Combiflam is a brand name; the record only lists generics. In India nobody says ibuprofen — they say Combiflam or Brufen, Ecosprin for aspirin, Voveran for diclofenac. The system now maps generics to Indian brands, and keeping that list current is a pharmacy job, which is an argument for storing it in the database rather than in code.
 
-Asked about DVT prophylaxis, Gemini described it as "a safety-critical standing order that must be strictly followed" — phrasing absent from the record, drawn from the safety metadata and the directive language in the system prompt. Harmless here, but it is precisely the drift the citation requirement exists to expose, and it argues for keeping governance metadata out of the model's context.
+### 9.5 "ortho budget" — asked by Nurse Priya
 
-### 9.8 Superseded protocols look identical to current ones
+**What happened:** a fluent, cited answer about post-surgery pain management.
 
-The sepsis record contains both v3 and the v2 figure it replaced. A retrieval system returning text without version semantics can surface the wrong number from the right record. Production needs an explicit supersedes relationship and a rule that superseded content is never quoted as current.
+Two faults compounded. The word "ortho" appears in the body text of half the records, so they all scraped past the relevance cutoff. And there was no check for "a record matches but you aren't cleared for it", so instead of refusing, the system answered a nearby question. This was the worst behaviour seen during the build, precisely because it looked correct.
 
-## 10. Limitations
+The same fault appeared for Dr. Ananya, who is not cleared for that record either.
 
-Stated plainly, because a hospital tool that oversells itself is the problem it claims to solve.
+Fixed by requiring records to anchor on title or keywords, and by adding the permission check that produces the refusal in section 8.2.
 
-- Authentication is a dropdown. There is no identity provider and no way to prove who is asking, so every access-control claim here is a design demonstration rather than an implementation.
+### 9.6 "ortho surgery" — asked by Dr. Meera
 
-- The Supabase service key bypasses row-level security. All authorization is enforced in the FastAPI layer. A production build moves these rules into RLS policies so they hold even if the application is wrong.
+**What happened:** a confident answer about DVT prophylaxis only.
 
-- The coverage threshold of 8 is uncalibrated. Lexical scores are not comparable across differently-worded questions — a long question accumulates score by being long. The number was chosen to fail toward refusing rather than answering, but it is a guess.
+That is a topic, not a question. Pain management and the discharge rule apply too, and the discharge rule exists because a patient was readmitted with a clot. Answering with whichever record happened to share a keyword presents an accident as a clinical judgement and silently drops the rest. The ambiguity check now lists them instead.
 
-- The ambiguity test is a token count, which is a crude proxy for "the user has not said what they want". The right signal is the gap between the top two scores, which needs calibrated scores this prototype does not have.
+### 9.7 "Patient Rajan has knee pain" — the answer stopped mid-word
 
-- Keywords are hand-curated. A doctor asking about "blood thinners" rather than anticoagulation may not surface the record they need. This is the most likely source of a false refusal, and false refusals are how a tool gets abandoned.
+The response ended at "prescribe Par". Gemini 3.x counts its internal reasoning against the output token limit, so a 400-token budget was consumed by thinking before the answer finished. The same model generation also silently rejects the `temperature` setting, which had been failing without any visible error.
 
-- There is no evaluation harness. Answers were verified by reading them, which is adequate for a 90-minute build and inadequate for a ward.
+### 9.8 "When should I start DVT prophylaxis?"
 
-- No EMR or pharmacy integration. Every patient fact comes from a static record, so the Warfarin–NSAID rule is a document rather than a live check against what the patient is actually taking.
+The answer described it as "a safety-critical standing order that must be strictly followed" — wording that appears nowhere in the record. It came from the `safety_critical` metadata being included in the model's context. Harmless here, but it is exactly the drift the citation requirement is meant to expose, and it argues for keeping internal metadata out of the model's view.
 
-- The audit table records queries but is not tamper-evident and has no retention policy.
+---
 
-## 11. Roadmap
+## 10. What I would add with more time
 
-### First 30 days — make it trustworthy
-
-- Evaluation harness: roughly 100 questions with approved answers, run on every prompt, record or model change, with a safety subset that must pass at 100% before release. Calibrate the coverage threshold against measured false-refusal and false-answer rates instead of judgement.
-
-- Move authorization into Supabase row-level security so the rules hold at the database, not only in the application.
-
-- SSO against the hospital directory, with role and department inherited from HR data rather than selected from a dropdown.
-
-- Protocol authoring workflow: HODs draft, a committee approves, changes are versioned with owner and effective date, superseded content marked rather than deleted.
-
-### Days 30–90 — make it useful at the bedside
-
-- EMR and pharmacy integration so patient-level interlocks read the live medication list.
-
-- Hybrid retrieval with metadata pre-filtering once the corpus passes a few hundred records.
-
-- Structured model output — answer, cited record IDs, confidence, gap flag — so citations are rendered from data rather than parsed out of prose.
-
-- Mobile and voice entry for ward rounds, where nobody is typing paragraphs into a laptop.
-
-### Beyond 90 days — make it institutional
-
-- Close the loop from incidents: when an incident review produces a rule, it enters the knowledge base with the incident attached and is enforced the same week. This is what turns the assistant into the hospital's memory rather than a search box over old documents.
-
-- Drift monitoring: track questions that repeatedly hit coverage gaps, because those are the protocols the hospital has not written down yet. The gap log is a clinical governance instrument in its own right.
-
-- Escalation routing: an unanswerable query becomes a message to the named owner of the nearest protocol, not a dead end.
-
-- Expansion into ICU, Paediatrics, Surgery and Pharmacy, each with its own owners and release rules.
-
-### Governance to put around it
-
-- A named clinical owner per record, reviewed on a fixed cycle. Unowned content is removed rather than allowed to age.
-
-- A standing rule that the assistant advises and never orders — the existing verbal orders policy applied to software.
-
-- Deployment inside the hospital's own boundary, with patient identifiers never leaving it, consistent with DPDP Act 2023 obligations.
-
-## 12. Closing position
-
-The valuable asset in this brief is not the model. It is the fifteen records — that a named consultant made a decision on a date, that a patient has refused a drug eight times, that someone was readmitted with a DVT after being discharged twelve hours too early. That knowledge currently lives in handover conversations, WhatsApp groups, and the heads of people who might resign. It is the least durable and most valuable thing the hospital owns.
-
-What this prototype argues is that the right job for a language model in a hospital is narrow and unglamorous: make that institutional knowledge answerable in the ten seconds a doctor actually has, while ordinary deterministic code ensures the model never decides what is safe, what is confidential, or what Supra's protocol is.
-
-*A hospital cannot use a public chatbot for the same reason it cannot use a locum who has never read the ward's notes — not because they lack medical knowledge, but because they lack this ward's medical knowledge, and they have no way of knowing what they are missing.*
+The first priority is a test set of roughly 100 questions with approved answers, run whenever the prompt, records or model change, with a safety subset that must pass completely before release — without it, the relevance cutoff is a guess and every fix risks breaking something else. After that: move access control into Postgres row-level security so the rules hold even if the application is wrong, replace the role dropdown with real logins from the hospital directory, and give HODs a way to edit protocols with approval and version history instead of needing a developer. Connecting to the EMR and pharmacy systems is what would make the patient alerts genuinely useful, since the warfarin–NSAID rule is worth far more as a live check against what someone is actually taking than as a document. Longer term, the valuable loop is incident-to-record: when a review produces a new rule it enters the knowledge base the same week, and the questions that repeatedly find no record become a list of the protocols the hospital hasn't written down yet.
